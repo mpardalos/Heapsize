@@ -25,7 +25,7 @@ import Control.DeepSeq (NFData, force)
 
 import GHC.Exts
 import GHC.Exts.Heap hiding (size)
-import qualified Data.HashTable.IO as H
+import qualified Data.HashSet as H
 import Data.IORef
 import Data.Hashable
 
@@ -65,31 +65,30 @@ closureSize x = return (I# (closureSize# x))
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
 
-type HashSet a = H.CuckooHashTable a ()
-
 recursiveSize :: a -> IO Int
 recursiveSize x = do
   performGC
 
   sizeSoFarRef :: IORef Int <- newIORef 0
-  closuresSeen :: HashSet HashableBox <- H.new
+  closuresSeen :: IORef (H.HashSet HashableBox) <- newIORef (H.empty)
 
   go sizeSoFarRef closuresSeen (asBox x)
 
   readIORef sizeSoFarRef
   where
-    go :: IORef Int -> HashSet HashableBox -> Box -> IO ()
-    go sizeSoFarRef closuresSeen b@(Box y) =
-      H.lookup closuresSeen (HashableBox b) >>= \case
-        Just () -> return ()
-        Nothing -> do
-          H.insert closuresSeen (HashableBox b) ()
-          let size = I# (closureSize# y)
-          modifyIORef sizeSoFarRef (+ size)
+    go :: IORef Int -> IORef (H.HashSet HashableBox) -> Box -> IO ()
+    go sizeSoFarRef closuresSeenRef b@(Box y) = do
+      closuresSeen <- readIORef closuresSeenRef
 
-          -- Closures above this size trigger a bug in `unpackClosure#`. Just don't inspect them.
-          when (size < 129022) $
-            mapM_ (go sizeSoFarRef closuresSeen) =<< (allClosures <$> getClosureData y)
+      when (not $ H.member (HashableBox b) closuresSeen) $ do
+        modifyIORef closuresSeenRef (H.insert (HashableBox b))
+
+        let size = I# (closureSize# y)
+        modifyIORef sizeSoFarRef (+ size)
+
+        -- Closures above this size trigger a bug in `unpackClosure#`. Just don't inspect them.
+        when (size < 129022) $
+          mapM_ (go sizeSoFarRef closuresSeenRef) =<< (allClosures <$> getClosureData y)
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
