@@ -15,8 +15,8 @@ listBenchmark :: Benchmark
 listBenchmark = bgroup "[Int]" $
   map mkBenchmark
     [ 1000
+    , 10000
     , 100000
-    , 10000000
     ]
   where
     mkBenchmark :: Int -> Benchmark
