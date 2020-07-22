@@ -74,12 +74,12 @@ recursiveSize x = do
   sizeSoFarRef :: IORef Int <- newIORef 0
   closuresSeen :: HashSet HashableBox <- H.new
 
-  go 0 sizeSoFarRef closuresSeen (asBox x)
+  go sizeSoFarRef closuresSeen (asBox x)
 
   readIORef sizeSoFarRef
   where
-    go :: Int -> IORef Int -> HashSet HashableBox -> Box -> IO ()
-    go lvl sizeSoFarRef closuresSeen b@(Box y) =
+    go :: IORef Int -> HashSet HashableBox -> Box -> IO ()
+    go sizeSoFarRef closuresSeen b@(Box y) =
       H.lookup closuresSeen (HashableBox b) >>= \case
         Just () -> return ()
         Nothing -> do
@@ -89,7 +89,7 @@ recursiveSize x = do
 
           -- Closures above this size trigger a bug in `unpackClosure#`. Just don't inspect them.
           when (size < 129022) $
-            mapM_ (go (lvl + 1) sizeSoFarRef closuresSeen) =<< (allClosures <$> getClosureData y)
+            mapM_ (go sizeSoFarRef closuresSeen) =<< (allClosures <$> getClosureData y)
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
