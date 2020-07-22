@@ -28,6 +28,14 @@ Library
   Hs-source-dirs: src/
   Ghc-options: -Wall
 
+benchmark criterion-benchmarks
+  build-depends:    base, criterion, ghc-datasize
+  default-language: Haskell2010
+  ghc-options:      -Wall
+  hs-source-dirs:   benchmarks
+  main-is:          Main.hs
+  type:             exitcode-stdio-1.0
+
 source-repository head
     type:     git
     location: https://github.com/mpardalos/ghc-datasize.git
