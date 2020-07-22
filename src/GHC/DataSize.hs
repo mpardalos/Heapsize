@@ -88,7 +88,7 @@ recursiveSize x = do
           modifyIORef sizeSoFarRef (+ size)
 
           -- Closures above this size trigger a bug in `unpackClosure#`. Just don't inspect them.
-          when (size > 129022) $
+          when (size < 129022) $
             mapM_ (go (lvl + 1) sizeSoFarRef closuresSeen) =<< (allClosures <$> getClosureData y)
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
