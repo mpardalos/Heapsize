@@ -29,7 +29,7 @@ Library
   Ghc-options: -Wall
 
 benchmark criterion-benchmarks
-  build-depends:    base, criterion, ghc-datasize
+  build-depends:    base, criterion, ghc-datasize, primitive
   default-language: Haskell2010
   ghc-options:      -Wall
   hs-source-dirs:   benchmarks
