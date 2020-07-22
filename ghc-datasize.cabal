@@ -28,8 +28,8 @@ Library
   Hs-source-dirs: src/
   Ghc-options: -Wall
 
-benchmark criterion-benchmarks
-  build-depends:    base, criterion, ghc-datasize, primitive
+benchmark benchmarks
+  build-depends:    base, criterion, ghc-datasize, primitive, deepseq
   default-language: Haskell2010
   ghc-options:      -Wall
   hs-source-dirs:   benchmarks
