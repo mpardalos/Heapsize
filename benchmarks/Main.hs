@@ -6,27 +6,20 @@ import GHC.DataSize
 import Data.Primitive.ByteArray
 
 listBenchmark :: Benchmark
-listBenchmark = bgroup "[Int]"
-    (map mkBenchmark
-     [ 1000
-     , 10000
-     , 100000
-     , 1000000
-     , 10000000
-     ])
+listBenchmark = bgroup "[Int]" $
+  map mkBenchmark
+    [ 1000
+    , 100000
+    , 10000000
+    ]
   where
     mkBenchmark :: Int -> Benchmark
     mkBenchmark size = env (pure [0 .. size]) $ \lst -> bench (show size) $ nfAppIO recursiveSize lst
 
 byteArrayBenchmark :: Benchmark
-byteArrayBenchmark = bgroup "ByteArray#"
-    (map mkBenchmark
-     [ 1000
-     , 10000
-     , 100000
-     , 1000000
-     , 10000000
-     ])
+byteArrayBenchmark = bgroup "ByteArray#" $
+  -- Just to make sure that it's O(1)
+  map mkBenchmark [10, 10000]
   where
     mkBenchmark :: Int -> Benchmark
     mkBenchmark size = env
