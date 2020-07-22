@@ -65,7 +65,7 @@ closureSize x = return (I# (closureSize# x))
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
 
-type HashSet a = H.LinearHashTable a ()
+type HashSet a = H.CuckooHashTable a ()
 
 recursiveSize :: a -> IO Int
 recursiveSize x = do
