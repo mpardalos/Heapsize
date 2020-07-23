@@ -76,24 +76,21 @@ recursiveSize :: a -> IO Int
 recursiveSize x = do
   performGC
 
-  sizeSoFarRef :: IORef Int <- newIORef 0
-  closuresSeen :: IORef (H.HashSet HashableBox) <- newIORef (H.empty)
+  state <- newIORef (0, H.empty)
+  go state (asBox x)
 
-  go sizeSoFarRef closuresSeen (asBox x)
-
-  readIORef sizeSoFarRef
+  fst <$> readIORef state
   where
-    go :: IORef Int -> IORef (H.HashSet HashableBox) -> Box -> IO ()
-    go sizeSoFarRef closuresSeenRef b@(Box y) = do
-      closuresSeen <- readIORef closuresSeenRef
+    go :: IORef (Int, H.HashSet HashableBox) -> Box -> IO ()
+    go state b@(Box y) = do
+      (_, closuresSeen) <- readIORef state
 
       when (not $ H.member (HashableBox b) closuresSeen) $ do
-        modifyIORef closuresSeenRef (H.insert (HashableBox b))
+        thisSize <- closureSize y
+        modifyIORef state $ \(size, _) ->
+          (size + thisSize, H.insert (HashableBox b) closuresSeen)
 
-        size <- closureSize y
-        modifyIORef sizeSoFarRef (+ size)
-
-        mapM_ (go sizeSoFarRef closuresSeenRef) =<< getClosures y
+        mapM_ (go state) =<< getClosures y
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
