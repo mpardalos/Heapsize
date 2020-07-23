@@ -24,6 +24,7 @@ module GHC.DataSize (
 import Control.DeepSeq (NFData, force)
 
 import GHC.Exts
+import GHC.Arr
 import GHC.Exts.Heap hiding (size)
 import qualified Data.HashSet as H
 import Data.IORef
@@ -35,11 +36,17 @@ import System.Mem
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 
--- Inspired by Simon Marlow:
--- https://ghcmutterings.wordpress.com/2009/02/12/53/
-
 closureSize :: a -> IO Int
-closureSize x = return (I# (closureSize# x))
+closureSize x = return (I# (closureSize# (unsafeCoerce# x)))
+
+foreign import prim "unpackClosurePtrs"
+  unpackClosurePtrs# :: Any -> Array# b
+
+getClosures :: a -> IO (Array Int Box)
+getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
+    pointers ->
+      let nelems = I# (sizeofArray# pointers)
+      in pure (fmap Box $ Array 0 (nelems - 1) nelems pointers)
 
 -- | Calculate the recursive size of GHC objects in Bytes. Note that the actual
 --   size in memory is calculated, so shared values are only counted once.
@@ -83,12 +90,10 @@ recursiveSize x = do
       when (not $ H.member (HashableBox b) closuresSeen) $ do
         modifyIORef closuresSeenRef (H.insert (HashableBox b))
 
-        let size = I# (closureSize# y)
+        size <- closureSize y
         modifyIORef sizeSoFarRef (+ size)
 
-        -- Closures above this size trigger a bug in `unpackClosure#`. Just don't inspect them.
-        when (size < 129022) $
-          mapM_ (go sizeSoFarRef closuresSeenRef) =<< (allClosures <$> getClosureData y)
+        mapM_ (go sizeSoFarRef closuresSeenRef) =<< getClosures y
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.

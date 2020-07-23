@@ -1,0 +1,11 @@
+#include "Cmm.h"
+
+unpackClosurePtrs ( P_ closure )
+{
+    W_ clos, ptrArray;
+
+    clos = UNTAG(closure);
+    ("ptr" ptrArray) = foreign "C" heap_view_closurePtrs(MyCapability() "ptr", clos "ptr");
+
+    return (ptrArray);
+}

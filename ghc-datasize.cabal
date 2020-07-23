@@ -1,9 +1,9 @@
+cabal-version:      3.0
 name:               ghc-datasize
 version:            0.2.2
-license:            BSD3
+license:            BSD-3-Clause
 license-file:       LICENSE
 category:           GHC, Debug, Development
-cabal-version:      >= 1.10
 build-type:         Simple
 author:             Dennis Felsing <dennis@felsin9.de>
 maintainer:         Dennis Felsing <dennis@felsin9.de>
@@ -18,13 +18,17 @@ description:        ghc-datasize is a tool to determine the size of data
 tested-with: GHC == 8.10.1
 
 Library
-  Exposed-modules: GHC.DataSize
+  Exposed-modules:
+    GHC.DataSize
+  cmm-sources:
+    src/GHC/unpack_closure_ptrs.cmm
   Default-Language: Haskell2010
   Build-depends: base >= 4.14,
                  deepseq >= 1.3 && < 1.5,
                  ghc-heap >= 8.10,
                  unordered-containers ==0.2.*,
-                 hashable ==1.3.*
+                 hashable ==1.3.*,
+                 primitive
   Hs-source-dirs: src/
   Ghc-options: -Wall
 
