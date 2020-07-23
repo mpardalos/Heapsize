@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               ghc-datasize
-version:            0.2.2
+version:            0.3
 license:            BSD-3-Clause
 license-file:       LICENSE
 category:           GHC, Debug, Development
