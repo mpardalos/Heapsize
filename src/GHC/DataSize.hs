@@ -17,6 +17,7 @@
 module GHC.DataSize (
   closureSize,
   recursiveSize,
+  recursiveSizeNoGC,
   recursiveSizeNF
   )
   where
