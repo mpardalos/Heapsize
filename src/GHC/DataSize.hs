@@ -71,11 +71,11 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 --   on large and complex ones. If speed is an issue it's probably possible to
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
-
 recursiveSize :: a -> IO Int
-recursiveSize x = do
-  performGC
+recursiveSize x = performGC >> recursiveSizeNoGC x
 
+recursiveSizeNoGC :: a -> IO Int
+recursiveSizeNoGC x = do
   state <- newIORef (0, H.empty)
   go state (asBox x)
 
