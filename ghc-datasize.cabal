@@ -20,7 +20,7 @@ tested-with: GHC == 8.10.1
 Library
   Exposed-modules:
     GHC.DataSize
-  cmm-sources:
+  c-sources:
     cmmbits/unpack_closure_ptrs.cmm
   Default-Language: Haskell2010
   Build-depends: base >= 4.14,
