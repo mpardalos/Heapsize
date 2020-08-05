@@ -36,12 +36,11 @@ import Control.Monad
 import System.Mem
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
+foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
+foreign import prim "closureSize" closureSize# :: Any -> Int#
 
 closureSize :: a -> IO Int
 closureSize x = return (I# (closureSize# (unsafeCoerce# x)))
-
-foreign import prim "unpackClosurePtrs"
-  unpackClosurePtrs# :: Any -> Array# b
 
 getClosures :: a -> IO (Array Int Box)
 getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of

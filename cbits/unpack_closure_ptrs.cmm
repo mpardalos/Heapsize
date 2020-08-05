@@ -9,3 +9,10 @@ unpackClosurePtrs ( P_ closure )
 
     return (ptrArray);
 }
+
+closureSize ( P_ closure )
+{
+    W_ len;
+    (len) = foreign "C" heap_view_closureSize(UNTAG(closure) "ptr");
+    return (len);
+}
