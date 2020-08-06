@@ -24,7 +24,7 @@ module GHC.DataSize (
 
 import Control.DeepSeq (NFData, force)
 
-import GHC.Exts
+import GHC.Exts hiding (closureSize#)
 import GHC.Arr
 import GHC.Exts.Heap hiding (size)
 import qualified Data.HashSet as H
