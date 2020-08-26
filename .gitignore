@@ -1,4 +1,5 @@
 .cabal-sandbox/
+dist-newstyle/
 cabal.sandbox.config
 dist/
 /ghc-datasize-benchmark.html
