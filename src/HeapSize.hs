@@ -9,12 +9,14 @@
 {-# LANGUAGE UnliftedFFITypes #-}
 
 {- |
-   Module      : GHC.DataSize
-   Copyright   : (c) Dennis Felsing
+   Module      : HeapSize
+   Copyright   : (c) Michail Pardalos
    License     : 3-Clause BSD-style
-   Maintainer  : dennis@felsin9.de
+   Maintainer  : mpardalos@gmail.com
+
+   Based on GHC.Datasize by Dennis Felsing
  -}
-module GHC.DataSize (
+module HeapSize (
   closureSize,
   recursiveSize,
   recursiveSizeNoGC,

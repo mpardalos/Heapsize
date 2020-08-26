@@ -5,7 +5,7 @@
 
 import Criterion.Main
 import Criterion.Types
-import GHC.DataSize
+import HeapSize
 import GHC.Generics (Generic)
 import Data.Primitive.ByteArray
 import Data.IORef
