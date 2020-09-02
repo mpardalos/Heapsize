@@ -17,10 +17,10 @@
    Based on GHC.Datasize by Dennis Felsing
  -}
 module HeapSize (
-  closureSize,
   recursiveSize,
   recursiveSizeNoGC,
-  recursiveSizeNF
+  recursiveSizeNF,
+  closureSize
   )
   where
 
@@ -41,6 +41,7 @@ foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
 foreign import prim "closureSize" closureSize# :: Any -> Int#
 
+-- | Get the *non-recursive* size of an closure in words
 closureSize :: a -> IO Int
 closureSize x = return (I# (closureSize# (unsafeCoerce# x)))
 
@@ -76,6 +77,10 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 recursiveSize :: a -> IO Int
 recursiveSize x = performGC >> recursiveSizeNoGC x
 
+-- | Same as `recursiveSize` except without performing garbage collection first.
+--   Useful if you want to measure the size of many objects in sequence. You can
+--   call `performGC` once at first and then use this function to avoid multiple
+--   unnecessary garbage collections.
 recursiveSizeNoGC :: a -> IO Int
 recursiveSizeNoGC x = do
   state <- newIORef (0, H.empty)
