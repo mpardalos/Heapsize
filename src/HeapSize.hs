@@ -1,7 +1,8 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -20,7 +21,9 @@ module HeapSize (
   recursiveSize,
   recursiveSizeNoGC,
   recursiveSizeNF,
-  closureSize
+  closureSize,
+  Heapsize,
+  runHeapsize
   )
   where
 
@@ -39,11 +42,13 @@ import Control.Monad
 
 import System.Mem
 import System.Mem.Weak
+import Data.Functor.Compose
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
 foreign import prim "closureSize" closureSize# :: Any -> Int#
 
+----------------------------------------------------------------------------
 newtype GcDetector = GcDetector {gcSinceCreation :: IO Bool}
 
 gcDetector :: IO GcDetector
@@ -61,6 +66,35 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
     pointers ->
       let nelems = I# (sizeofArray# pointers)
       in pure (fmap Box $ Array 0 (nelems - 1) nelems pointers)
+
+--------------------------------------------------------------------------------
+
+data HeapsizeState = HeapsizeState
+  {
+    accSize      :: !Int,
+    closuresSeen :: !(H.HashSet HashableBox)
+  }
+
+newtype Heapsize a = Heapsize ((IORef HeapsizeState, GcDetector) -> IO (Maybe a))
+
+instance Functor Heapsize where
+  fmap f (Heapsize comp) = Heapsize $ (fmap.fmap.fmap) f comp
+
+instance Applicative Heapsize where
+  pure = Heapsize . pure . pure . pure
+  Heapsize f <*> Heapsize m = Heapsize $ \env ->
+    getCompose $ Compose (f env) <*> Compose (m env)
+
+liftIO :: IO a -> Heapsize a
+liftIO = Heapsize . (fmap.fmap) Just . const
+
+runHeapsize :: Heapsize a -> IO (Maybe a)
+runHeapsize (Heapsize comp) = do
+  stateRef <- newIORef $ HeapsizeState 0 H.empty
+  gcDetect <- gcDetector
+  comp (stateRef, gcDetect)
+
+--------------------------------------------------------------------------------
 
 -- | Calculate the recursive size of GHC objects in Bytes. Note that the actual
 --   size in memory is calculated, so shared values are only counted once.
@@ -86,36 +120,34 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
 --   Returns `Nothing` if the count is interrupted by a garbage collection
-recursiveSize :: a -> IO (Maybe Int)
-recursiveSize x = performGC >> recursiveSizeNoGC x
+recursiveSize :: a -> Heapsize Int
+recursiveSize x = liftIO performGC *> recursiveSizeNoGC x
 
 -- | Same as `recursiveSize` except without performing garbage collection first.
 --   Useful if you want to measure the size of many objects in sequence. You can
 --   call `performGC` once at first and then use this function to avoid multiple
 --   unnecessary garbage collections.
 --   Returns `Nothing` if the count is interrupted by a garbage collection
-recursiveSizeNoGC :: a -> IO (Maybe Int)
-recursiveSizeNoGC x = do
-  state <- newIORef (0, H.empty)
-  gcDetect <- gcDetector
+recursiveSizeNoGC :: a -> Heapsize Int
+recursiveSizeNoGC x = Heapsize $ \(state, gcDetect) -> do
   success <- go (gcSinceCreation gcDetect) state (asBox x)
 
-  if success then Just . fst <$> readIORef state else return Nothing
+  if success then Just . accSize <$> readIORef state else return Nothing
   where
-    go :: IO Bool -> IORef (Int, H.HashSet HashableBox) -> Box -> IO Bool
+    go :: IO Bool -> IORef HeapsizeState -> Box -> IO Bool
     go checkGC state b@(Box y) = do
-      (_, closuresSeen) <- readIORef state
+      HeapsizeState{closuresSeen} <- readIORef state
 
       !seen <- evaluate $ H.member (HashableBox b) closuresSeen
 
       gcHasRun <- checkGC
 
       if gcHasRun then return False else do
-        when (not seen) $ do
+        unless seen $ do
           thisSize <- closureSize y
           next <- getClosures y
-          modifyIORef state $ \(size, _) ->
-            (size + thisSize, H.insert (HashableBox b) closuresSeen)
+          modifyIORef state $ \HeapsizeState{..} ->
+            HeapsizeState (accSize + thisSize) (H.insert (HashableBox b) closuresSeen)
 
           mapM_ (go checkGC state) next
         return True
@@ -125,7 +157,7 @@ recursiveSizeNoGC x = do
 -- Using this function requires that the data structure has an `NFData`
 -- typeclass instance.
 -- Returns `Nothing` if the count is interrupted by a garbage collection
-recursiveSizeNF :: NFData a => a -> IO (Maybe Int)
+recursiveSizeNF :: NFData a => a -> Heapsize Int
 recursiveSizeNF = recursiveSize . force
 
 newtype HashableBox = HashableBox Box
