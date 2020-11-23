@@ -29,6 +29,9 @@ module HeapSize (
 
 import Control.DeepSeq (NFData, force)
 import Control.Exception (evaluate)
+import Control.Monad.Catch
+import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.Reader
 import Data.Maybe (isNothing)
 
 import GHC.Exts hiding (closureSize#)
@@ -42,7 +45,6 @@ import Control.Monad
 
 import System.Mem
 import System.Mem.Weak
-import Data.Functor.Compose
 import Control.Monad.IO.Class
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
@@ -77,31 +79,15 @@ data HeapsizeState = HeapsizeState
   }
 
 newtype Heapsize a = Heapsize
-  { unHeapsize :: (IORef HeapsizeState, GcDetector) -> IO (Maybe a)}
+  { _unHeapsize :: ReaderT (IORef HeapsizeState, GcDetector) (MaybeT IO) a}
+  deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
-instance Functor Heapsize where
-  fmap f (Heapsize comp) = Heapsize $ (fmap.fmap.fmap) f comp
-
-instance Applicative Heapsize where
-  pure = Heapsize . pure . pure . pure
-  Heapsize f <*> Heapsize m = Heapsize $ \env ->
-    getCompose $ Compose (f env) <*> Compose (m env)
-
-instance Monad Heapsize where
-  Heapsize io >>= k = Heapsize $ \env -> do
-    a <- io env
-    case a of
-      Nothing -> return Nothing
-      Just a' -> unHeapsize (k a') env
-
-instance MonadIO Heapsize where
-  liftIO = Heapsize . (fmap.fmap) Just . const
 
 runHeapsize :: Heapsize a -> IO (Maybe a)
 runHeapsize (Heapsize comp) = do
   stateRef <- newIORef $ HeapsizeState 0 H.empty
   gcDetect <- gcDetector
-  comp (stateRef, gcDetect)
+  runMaybeT $ runReaderT comp (stateRef, gcDetect)
 
 --------------------------------------------------------------------------------
 
@@ -138,10 +124,11 @@ recursiveSize x = liftIO performGC *> recursiveSizeNoGC x
 --   unnecessary garbage collections.
 --   Returns `Nothing` if the count is interrupted by a garbage collection
 recursiveSizeNoGC :: a -> Heapsize Int
-recursiveSizeNoGC x = Heapsize $ \(state, gcDetect) -> do
-  success <- go (gcSinceCreation gcDetect) state (asBox x)
+recursiveSizeNoGC x = Heapsize $ do
+  (state, gcDetect) <- ask
+  success <- liftIO $ go (gcSinceCreation gcDetect) state (asBox x)
 
-  if success then Just . accSize <$> readIORef state else return Nothing
+  if success then liftIO (accSize <$> readIORef state) else mzero
   where
     go :: IO Bool -> IORef HeapsizeState -> Box -> IO Bool
     go checkGC state b@(Box y) = do
