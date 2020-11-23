@@ -43,6 +43,7 @@ import Control.Monad
 import System.Mem
 import System.Mem.Weak
 import Data.Functor.Compose
+import Control.Monad.IO.Class
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
@@ -75,7 +76,8 @@ data HeapsizeState = HeapsizeState
     closuresSeen :: !(H.HashSet HashableBox)
   }
 
-newtype Heapsize a = Heapsize ((IORef HeapsizeState, GcDetector) -> IO (Maybe a))
+newtype Heapsize a = Heapsize
+  { unHeapsize :: (IORef HeapsizeState, GcDetector) -> IO (Maybe a)}
 
 instance Functor Heapsize where
   fmap f (Heapsize comp) = Heapsize $ (fmap.fmap.fmap) f comp
@@ -85,8 +87,15 @@ instance Applicative Heapsize where
   Heapsize f <*> Heapsize m = Heapsize $ \env ->
     getCompose $ Compose (f env) <*> Compose (m env)
 
-liftIO :: IO a -> Heapsize a
-liftIO = Heapsize . (fmap.fmap) Just . const
+instance Monad Heapsize where
+  Heapsize io >>= k = Heapsize $ \env -> do
+    a <- io env
+    case a of
+      Nothing -> return Nothing
+      Just a' -> unHeapsize (k a') env
+
+instance MonadIO Heapsize where
+  liftIO = Heapsize . (fmap.fmap) Just . const
 
 runHeapsize :: Heapsize a -> IO (Maybe a)
 runHeapsize (Heapsize comp) = do
