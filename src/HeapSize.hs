@@ -127,17 +127,17 @@ recursiveSize x = Heapsize $ do
 
       !seen <- evaluate $ H.member (HashableBox b) closuresSeen
 
-      gcHasRun <- checkGC
+      if seen then return True else do
 
-      if gcHasRun then return False else do
-        unless seen $ do
-          thisSize <- closureSize y
-          next <- getClosures y
-          modifyIORef state $ \HeapsizeState{..} ->
-            HeapsizeState (accSize + thisSize) (H.insert (HashableBox b) closuresSeen)
+        let guardGC k = checkGC >>= \abort -> if abort then return False else k
 
-          mapM_ (go checkGC state) next
-        return True
+        guardGC $ closureSize y >>= \thisSize ->
+          guardGC $ getClosures y >>= \next -> do
+            modifyIORef state $ \HeapsizeState{..} ->
+              HeapsizeState (accSize + thisSize) (H.insert (HashableBox b) closuresSeen)
+
+            mapM_ (go checkGC state) next
+            return True
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
