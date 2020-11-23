@@ -19,7 +19,6 @@
  -}
 module HeapSize (
   recursiveSize,
-  recursiveSizeNoGC,
   recursiveSizeNF,
   closureSize,
   Heapsize,
@@ -83,9 +82,12 @@ newtype Heapsize a = Heapsize
   deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
 
+--   A garbage collection is performed before the size is calculated, because
+--   the garbage collector would make heap walks difficult.
 runHeapsize :: Heapsize a -> IO (Maybe a)
 runHeapsize (Heapsize comp) = do
   stateRef <- newIORef $ HeapsizeState 0 H.empty
+  performGC
   gcDetect <- gcDetector
   runMaybeT $ runReaderT comp (stateRef, gcDetect)
 
@@ -107,24 +109,13 @@ runHeapsize (Heapsize comp) = do
 --   ($!! from Control.DeepSeq) to force full evaluation before calculating the
 --   size.
 --
---   A garbage collection is performed before the size is calculated, because
---   the garbage collector would make heap walks difficult.
---
 --   This function works very quickly on small data structures, but can be slow
 --   on large and complex ones. If speed is an issue it's probably possible to
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
 --   Returns `Nothing` if the count is interrupted by a garbage collection
 recursiveSize :: a -> Heapsize Int
-recursiveSize x = liftIO performGC *> recursiveSizeNoGC x
-
--- | Same as `recursiveSize` except without performing garbage collection first.
---   Useful if you want to measure the size of many objects in sequence. You can
---   call `performGC` once at first and then use this function to avoid multiple
---   unnecessary garbage collections.
---   Returns `Nothing` if the count is interrupted by a garbage collection
-recursiveSizeNoGC :: a -> Heapsize Int
-recursiveSizeNoGC x = Heapsize $ do
+recursiveSize x = Heapsize $ do
   (state, gcDetect) <- ask
   success <- liftIO $ go (gcSinceCreation gcDetect) state (asBox x)
 
