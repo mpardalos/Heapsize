@@ -25,6 +25,8 @@ module HeapSize (
   where
 
 import Control.DeepSeq (NFData, force)
+import Control.Exception (evaluate)
+import Data.Maybe (isNothing)
 
 import GHC.Exts hiding (closureSize#)
 import GHC.Arr
@@ -36,10 +38,19 @@ import Data.Hashable
 import Control.Monad
 
 import System.Mem
+import System.Mem.Weak
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
 foreign import prim "closureSize" closureSize# :: Any -> Int#
+
+newtype GcDetector = GcDetector {gcSinceCreation :: IO Bool}
+
+gcDetector :: IO GcDetector
+gcDetector = do
+  ref <- newIORef ()
+  w <- mkWeakIORef ref (return ())
+  return $ GcDetector $ isNothing <$> deRefWeak w
 
 -- | Get the *non-recursive* size of an closure in words
 closureSize :: a -> IO Int
@@ -74,37 +85,47 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 --   on large and complex ones. If speed is an issue it's probably possible to
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
-recursiveSize :: a -> IO Int
+--   Returns `Nothing` if the count is interrupted by a garbage collection
+recursiveSize :: a -> IO (Maybe Int)
 recursiveSize x = performGC >> recursiveSizeNoGC x
 
 -- | Same as `recursiveSize` except without performing garbage collection first.
 --   Useful if you want to measure the size of many objects in sequence. You can
 --   call `performGC` once at first and then use this function to avoid multiple
 --   unnecessary garbage collections.
-recursiveSizeNoGC :: a -> IO Int
+--   Returns `Nothing` if the count is interrupted by a garbage collection
+recursiveSizeNoGC :: a -> IO (Maybe Int)
 recursiveSizeNoGC x = do
   state <- newIORef (0, H.empty)
-  go state (asBox x)
+  gcDetect <- gcDetector
+  success <- go (gcSinceCreation gcDetect) state (asBox x)
 
-  fst <$> readIORef state
+  if success then Just . fst <$> readIORef state else return Nothing
   where
-    go :: IORef (Int, H.HashSet HashableBox) -> Box -> IO ()
-    go state b@(Box y) = do
+    go :: IO Bool -> IORef (Int, H.HashSet HashableBox) -> Box -> IO Bool
+    go checkGC state b@(Box y) = do
       (_, closuresSeen) <- readIORef state
 
-      when (not $ H.member (HashableBox b) closuresSeen) $ do
-        thisSize <- closureSize y
-        modifyIORef state $ \(size, _) ->
-          (size + thisSize, H.insert (HashableBox b) closuresSeen)
+      !seen <- evaluate $ H.member (HashableBox b) closuresSeen
 
-        mapM_ (go state) =<< getClosures y
+      gcHasRun <- checkGC
+
+      if gcHasRun then return False else do
+        when (not seen) $ do
+          thisSize <- closureSize y
+          next <- getClosures y
+          modifyIORef state $ \(size, _) ->
+            (size + thisSize, H.insert (HashableBox b) closuresSeen)
+
+          mapM_ (go checkGC state) next
+        return True
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
 -- Using this function requires that the data structure has an `NFData`
 -- typeclass instance.
-
-recursiveSizeNF :: NFData a => a -> IO Int
+-- Returns `Nothing` if the count is interrupted by a garbage collection
+recursiveSizeNF :: NFData a => a -> IO (Maybe Int)
 recursiveSizeNF = recursiveSize . force
 
 newtype HashableBox = HashableBox Box
