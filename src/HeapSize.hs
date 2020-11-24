@@ -27,7 +27,7 @@ module HeapSize (
   where
 
 import Control.DeepSeq (NFData, force)
-import Control.Exception (evaluate)
+import Control.Exception (throwIO, evaluate)
 import Control.Monad.Catch
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Reader
@@ -46,6 +46,7 @@ import Control.Monad
 import System.Mem
 import System.Mem.Weak
 import Control.Monad.IO.Class
+import Data.Typeable (Typeable)
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
@@ -82,13 +83,14 @@ newtype Heapsize a = Heapsize
   { _unHeapsize :: ReaderT (HeapsizeState, GcDetector) (MaybeT IO) a}
   deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
+initSize = 100000000
 
 --   A garbage collection is performed before the size is calculated, because
 --   the garbage collector would make heap walks difficult.
 runHeapsize :: Heapsize a -> IO (Maybe a)
 runHeapsize (Heapsize comp) = do
   stateRef <- newIORef 0
-  ht <- HT.newSized 1000000
+  !ht <- HT.newSized initSize
   performGC
   gcDetect <- gcDetector
   runMaybeT $ runReaderT comp (HeapsizeState stateRef ht, gcDetect)
@@ -118,26 +120,29 @@ runHeapsize (Heapsize comp) = do
 --   Returns `Nothing` if the count is interrupted by a garbage collection
 recursiveSize :: a -> Heapsize Int
 recursiveSize x = Heapsize $ do
-  (state, gcDetect) <- ask
-  success <- liftIO $ go (gcSinceCreation gcDetect) state (asBox x)
-
-  if success then liftIO (readIORef (accSizeRef state)) else mzero
-  where
-    go :: IO Bool -> HeapsizeState -> Box -> IO Bool
-    go checkGC state@HeapsizeState{..} b@(Box y) = do
+  (HeapsizeState{..}, gcDetect) <- ask
+  let checkGC = gcSinceCreation gcDetect
+  let
+    go :: Box -> IO ()
+    go b@(Box y) = do
       !seen <- isJust <$> HT.lookupIndex closuresSeen (HashableBox b)
 
-      if seen then return True else do
+      unless seen $ do
 
-        let guardGC k = checkGC >>= \abort -> if abort then return False else k
+        let guardGC k = checkGC >>= \abort -> if abort then throwIO Interrupted else k
 
         guardGC $ closureSize y >>= \thisSize ->
           guardGC $ getClosures y >>= \next -> do
             modifyIORef accSizeRef (+ thisSize)
             HT.insert closuresSeen (HashableBox b) ()
 
-            mapM_ (go checkGC state) next
-            return True
+            mapM_ go next
+
+  liftIO (go (asBox x)) `catch` \Interrupted -> mzero
+  liftIO (readIORef accSizeRef)
+
+data Interrupted = Interrupted deriving (Show, Typeable)
+instance Exception Interrupted
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
