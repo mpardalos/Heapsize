@@ -31,7 +31,8 @@ import Control.Exception (evaluate)
 import Control.Monad.Catch
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Reader
-import Data.Maybe (isNothing)
+import qualified Data.HashTable.IO as HT
+import Data.Maybe (isJust, isNothing)
 
 import GHC.Exts hiding (closureSize#)
 import GHC.Arr
@@ -73,12 +74,12 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 
 data HeapsizeState = HeapsizeState
   {
-    accSize      :: !Int,
-    closuresSeen :: !(H.HashSet HashableBox)
+    accSizeRef   :: IORef Int,
+    closuresSeen :: HT.BasicHashTable HashableBox ()
   }
 
 newtype Heapsize a = Heapsize
-  { _unHeapsize :: ReaderT (IORef HeapsizeState, GcDetector) (MaybeT IO) a}
+  { _unHeapsize :: ReaderT (HeapsizeState, GcDetector) (MaybeT IO) a}
   deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
 
@@ -86,10 +87,11 @@ newtype Heapsize a = Heapsize
 --   the garbage collector would make heap walks difficult.
 runHeapsize :: Heapsize a -> IO (Maybe a)
 runHeapsize (Heapsize comp) = do
-  stateRef <- newIORef $ HeapsizeState 0 H.empty
+  stateRef <- newIORef 0
+  ht <- HT.newSized 1000000
   performGC
   gcDetect <- gcDetector
-  runMaybeT $ runReaderT comp (stateRef, gcDetect)
+  runMaybeT $ runReaderT comp (HeapsizeState stateRef ht, gcDetect)
 
 --------------------------------------------------------------------------------
 
@@ -119,13 +121,11 @@ recursiveSize x = Heapsize $ do
   (state, gcDetect) <- ask
   success <- liftIO $ go (gcSinceCreation gcDetect) state (asBox x)
 
-  if success then liftIO (accSize <$> readIORef state) else mzero
+  if success then liftIO (readIORef (accSizeRef state)) else mzero
   where
-    go :: IO Bool -> IORef HeapsizeState -> Box -> IO Bool
-    go checkGC state b@(Box y) = do
-      HeapsizeState{closuresSeen} <- readIORef state
-
-      !seen <- evaluate $ H.member (HashableBox b) closuresSeen
+    go :: IO Bool -> HeapsizeState -> Box -> IO Bool
+    go checkGC state@HeapsizeState{..} b@(Box y) = do
+      !seen <- isJust <$> HT.lookupIndex closuresSeen (HashableBox b)
 
       if seen then return True else do
 
@@ -133,8 +133,8 @@ recursiveSize x = Heapsize $ do
 
         guardGC $ closureSize y >>= \thisSize ->
           guardGC $ getClosures y >>= \next -> do
-            modifyIORef state $ \HeapsizeState{..} ->
-              HeapsizeState (accSize + thisSize) (H.insert (HashableBox b) closuresSeen)
+            modifyIORef accSizeRef (+ thisSize)
+            HT.insert closuresSeen (HashableBox b) ()
 
             mapM_ (go checkGC state) next
             return True
