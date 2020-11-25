@@ -141,9 +141,10 @@ recursiveSize x = Heapsize $ do
     go :: [ Box ] -> IO ()
     go [] = return ()
     go (b@(Box y) : rest) = do
+      let addr = W# (aToWord# y)
       !seen <- isJust <$> HT.lookup closuresSeen (HashableBox b)
 
-      next <- if seen then return [] else do
+      next <- if seen || isBadAddress addr then return [] else do
           -- always check that GC has not happened before deref pointers
           checkGC
           thisSize <- closureSize y
@@ -171,6 +172,10 @@ instance Exception Interrupted
 -- typeclass instance.
 recursiveSizeNF :: NFData a => a -> Heapsize Int
 recursiveSizeNF = recursiveSize . force
+
+isBadAddress :: Word -> Bool
+isBadAddress 0 = True
+isBadAddress _ = False
 
 newtype HashableBox = HashableBox Box
     deriving newtype Show
