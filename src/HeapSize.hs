@@ -89,14 +89,11 @@ newtype Heapsize a = Heapsize
   { _unHeapsize :: ReaderT HeapsizeState (MaybeT IO) a}
   deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
-initSize :: Int
-initSize = 10000000
-
 --   A garbage collection is performed before the size is calculated, because
 --   the garbage collector would make heap walks difficult.
 --   Returns `Nothing` if the count is interrupted by a garbage collection
-runHeapsize :: Heapsize a -> IO (Maybe a)
-runHeapsize (Heapsize comp) = do
+runHeapsize :: Int -> Heapsize a -> IO (Maybe a)
+runHeapsize initSize (Heapsize comp) = do
 
   -- initialize the mutable state
   !closuresSeen <- HT.newSized initSize
