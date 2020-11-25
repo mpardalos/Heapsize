@@ -90,7 +90,7 @@ newtype Heapsize a = Heapsize
   deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
 
 initSize :: Int
-initSize = 4000000
+initSize = 10000000
 
 --   A garbage collection is performed before the size is calculated, because
 --   the garbage collector would make heap walks difficult.
