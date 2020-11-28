@@ -1,8 +1,7 @@
 cradle:
-  multi:
-    - path: "./src"
-      config: { cradle: {cabal: {component: "ghc-datasize:lib:ghc-datasize"}}}
-    - path: "./test"
-      config: { cradle: {cabal: {component: "ghc-datasize:bench:benchmarks"}}}
-    - path: "."
-      config: { cradle: { none: } }
+  cabal:
+    - path: "src/"
+      component: "lib:heapsize"
+
+    - path: "benchmarks/Main.hs"
+      component: "heapsize:bench:benchmarks"
