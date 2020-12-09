@@ -1,13 +1,13 @@
-cabal-version:      3.0
+cabal-version:      2.0
 name:               heapsize
-version:            0.3.0
-license:            BSD-3-Clause
+version:            0.3.0.1
+license:            BSD3
 license-file:       LICENSE
 category:           GHC, Debug, Development
 build-type:         Simple
 author:             Michail Pardalos <mpardalos@gmail.com>
 maintainer:         Pepe Iborra <pepeiborra@gmail.com>
-copyright:          Michail Pardalos 2020, Pepe Iborra 2020-2021
+copyright:          Dennis Felsing 2012-2019, Michail Pardalos 2020, Pepe Iborra 2020-2021
 synopsis:           Determine the size of runtime data structures
 description:        heapsize is a tool to determine the size data structures.
                     Determining the size of recursive data structures is
