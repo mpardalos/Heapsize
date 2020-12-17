@@ -21,7 +21,7 @@ listBenchmark = bgroup "[Int]" $
     ]
   where
     mkBenchmark :: Int -> Benchmark
-    mkBenchmark size = env (pure [0 .. size]) $ \lst -> bench (show size) $ nfAppIO recursiveSize lst
+    mkBenchmark size = env (pure [0 .. size]) $ \lst -> bench (show size) $ nfAppIO (runHeapsize . recursiveSize) lst
 
 byteArrayBenchmark :: Benchmark
 byteArrayBenchmark = bgroup "ByteArray#" $
@@ -31,14 +31,14 @@ byteArrayBenchmark = bgroup "ByteArray#" $
     mkBenchmark :: Int -> Benchmark
     mkBenchmark size = env
       (newByteArray size)
-      (\lst -> bench (show size) $ nfAppIO recursiveSize lst)
+      (\lst -> bench (show size) $ nfAppIO (runHeapsize . recursiveSize) lst)
 
 
 data C = C Int (IORef C)
   deriving (Generic, NFData)
 
 circularBenchmark :: Benchmark
-circularBenchmark = env mkT (\c -> bench "Circular" (nfAppIO recursiveSize c))
+circularBenchmark = env mkT (\c -> bench "Circular" (nfAppIO (runHeapsize . recursiveSize) c))
   where
     mkT :: IO C
     mkT = do

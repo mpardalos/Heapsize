@@ -1,7 +1,8 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -18,28 +19,40 @@
  -}
 module HeapSize (
   recursiveSize,
-  recursiveSizeNoGC,
   recursiveSizeNF,
-  closureSize
+  closureSize,
+  Heapsize,
+  runHeapsize
   )
   where
 
 import Control.DeepSeq (NFData, force)
+import Control.Exception (throwIO)
+import Control.Monad
+import Control.Monad.Catch
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Maybe
+import Control.Monad.Trans.Reader
+import Data.IORef
+import Data.Hashable
+import qualified Data.HashTable.IO as HT
+import Data.Maybe (isJust, isNothing)
+import Data.Typeable (Typeable)
 
 import GHC.Exts hiding (closureSize#)
 import GHC.Arr
 import GHC.Exts.Heap hiding (size)
-import qualified Data.HashSet as H
-import Data.IORef
-import Data.Hashable
-
-import Control.Monad
+import qualified Data.Foldable as F
 
 import System.Mem
+import System.Mem.Weak
+import Debug.Trace
 
 foreign import prim "aToWordzh" aToWord# :: Any -> Word#
 foreign import prim "unpackClosurePtrs" unpackClosurePtrs# :: Any -> Array# b
 foreign import prim "closureSize" closureSize# :: Any -> Int#
+
+----------------------------------------------------------------------------
 
 -- | Get the *non-recursive* size of an closure in words
 closureSize :: a -> IO Int
@@ -50,6 +63,51 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
     pointers ->
       let nelems = I# (sizeofArray# pointers)
       in pure (fmap Box $ Array 0 (nelems - 1) nelems pointers)
+
+--------------------------------------------------------------------------------
+
+data HeapsizeState = HeapsizeState
+  {
+    -- | A mutable seen set
+    closuresSeen :: HT.BasicHashTable HashableBox (),
+    -- | A counter for the seen set
+    seenSizeRef  :: IORef Int,
+    -- | Did the GC run since the computation start?
+    gcDetect     :: GcDetector
+  }
+
+-- | A one-shot device for detecting garbage collections
+newtype GcDetector = GcDetector {gcSinceCreation :: IO Bool}
+
+gcDetector :: IO GcDetector
+gcDetector = do
+  ref <- newIORef ()
+  w <- mkWeakIORef ref (return ())
+  return $ GcDetector $ isNothing <$> deRefWeak w
+
+newtype Heapsize a = Heapsize
+  { _unHeapsize :: ReaderT HeapsizeState (MaybeT IO) a}
+  deriving (Applicative, Functor, Monad, MonadIO, MonadCatch, MonadMask, MonadThrow)
+
+--   A garbage collection is performed before the size is calculated, because
+--   the garbage collector would make heap walks difficult.
+--   Returns `Nothing` if the count is interrupted by a garbage collection
+runHeapsize :: Int -> Heapsize a -> IO (Maybe a)
+runHeapsize initSize (Heapsize comp) = do
+
+  -- initialize the mutable state
+  !closuresSeen <- HT.newSized initSize
+  seenSizeRef   <- newIORef 0
+
+  -- Perform a major GC
+  performMajorGC
+
+  -- Create a GC detector for the duration of the entire computation
+  gcDetect <- gcDetector
+
+  runMaybeT $ runReaderT comp HeapsizeState{..}
+
+--------------------------------------------------------------------------------
 
 -- | Calculate the recursive size of GHC objects in Bytes. Note that the actual
 --   size in memory is calculated, so shared values are only counted once.
@@ -67,45 +125,54 @@ getClosures x = case unpackClosurePtrs# (unsafeCoerce# x) of
 --   ($!! from Control.DeepSeq) to force full evaluation before calculating the
 --   size.
 --
---   A garbage collection is performed before the size is calculated, because
---   the garbage collector would make heap walks difficult.
---
 --   This function works very quickly on small data structures, but can be slow
 --   on large and complex ones. If speed is an issue it's probably possible to
 --   get the exact size of a small portion of the data structure and then
 --   estimate the total size from that.
-recursiveSize :: a -> IO Int
-recursiveSize x = performGC >> recursiveSizeNoGC x
+recursiveSize :: a -> Heapsize Int
+recursiveSize x = Heapsize $ do
+  HeapsizeState{..} <- ask
+  accSizeRef <- liftIO $ newIORef 0
+  let checkGC = gcSinceCreation gcDetect >>= \abort -> when abort $ throwIO Interrupted
+  let
+    go :: [ Box ] -> IO ()
+    go [] = return ()
+    go (b@(Box y) : rest) = do
+      let addr = W# (aToWord# y)
+      !seen <- isJust <$> HT.lookup closuresSeen (HashableBox b)
 
--- | Same as `recursiveSize` except without performing garbage collection first.
---   Useful if you want to measure the size of many objects in sequence. You can
---   call `performGC` once at first and then use this function to avoid multiple
---   unnecessary garbage collections.
-recursiveSizeNoGC :: a -> IO Int
-recursiveSizeNoGC x = do
-  state <- newIORef (0, H.empty)
-  go state (asBox x)
+      next <- if seen || isBadAddress addr then return [] else do
+          -- always check that GC has not happened before deref pointers
+          checkGC
+          thisSize <- closureSize y
+          checkGC
+          next <- getClosures y
 
-  fst <$> readIORef state
-  where
-    go :: IORef (Int, H.HashSet HashableBox) -> Box -> IO ()
-    go state b@(Box y) = do
-      (_, closuresSeen) <- readIORef state
+          HT.insert closuresSeen (HashableBox b) ()
+          modifyIORef' accSizeRef (+ thisSize)
+          modifyIORef' seenSizeRef succ
+          return (F.toList next)
+      go (next ++ rest)
 
-      when (not $ H.member (HashableBox b) closuresSeen) $ do
-        thisSize <- closureSize y
-        modifyIORef state $ \(size, _) ->
-          (size + thisSize, H.insert (HashableBox b) closuresSeen)
+  liftIO (go [asBox x]) `catch` \Interrupted -> do
+    seen <- liftIO $ readIORef seenSizeRef
+    liftIO $ traceIO ("SEEN: " <> show seen)
+    mzero
+  liftIO (readIORef accSizeRef)
 
-        mapM_ (go state) =<< getClosures y
+data Interrupted = Interrupted deriving (Show, Typeable)
+instance Exception Interrupted
 
 -- | Calculate the recursive size of GHC objects in Bytes after calling
 -- Control.DeepSeq.force on the data structure to force it into Normal Form.
 -- Using this function requires that the data structure has an `NFData`
 -- typeclass instance.
-
-recursiveSizeNF :: NFData a => a -> IO Int
+recursiveSizeNF :: NFData a => a -> Heapsize Int
 recursiveSizeNF = recursiveSize . force
+
+isBadAddress :: Word -> Bool
+isBadAddress 0 = True
+isBadAddress _ = False
 
 newtype HashableBox = HashableBox Box
     deriving newtype Show
